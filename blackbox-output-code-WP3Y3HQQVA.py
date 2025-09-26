@@ -1,46 +1,64 @@
-import pandas as pd
-import sqlite3
+"""
+Python Script to Populate Walmart SQLite Database from Spreadsheets
 
-# Connect to the SQLite database (assumes it's in the current directory)
-conn = sqlite3.connect('shipping.db')
+Instructions:
+1. Place the spreadsheet files in the same directory as this script.
+2. Ensure pandas and sqlite3 libraries are installed.
+3. Run the script to populate the database.
+"""
+
+import sqlite3
+import pandas as pd
+
+# Step 1: Load the spreadsheets
+spreadsheet_0 = pd.read_excel("spreadsheet0.xlsx")
+spreadsheet_1 = pd.read_excel("spreadsheet1.xlsx")
+spreadsheet_2 = pd.read_excel("spreadsheet2.xlsx")
+
+# Step 2: Connect to the SQLite database
+conn = sqlite3.connect("walmart.db")
 cursor = conn.cursor()
 
-# Create the table if it doesn't exist (adjust schema as per actual DB)
+# Optional: Create tables if they don't exist
 cursor.execute('''
-CREATE TABLE IF NOT EXISTS shipments (
-    shipping_id INTEGER,
-    product TEXT,
-    quantity INTEGER,
-    origin TEXT,
-    destination TEXT
+CREATE TABLE IF NOT EXISTS products (
+    product_id INTEGER PRIMARY KEY,
+    product_name TEXT,
+    category TEXT,
+    price REAL
 )
 ''')
+
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS shipments (
+    shipment_id INTEGER,
+    product_id INTEGER,
+    quantity INTEGER,
+    origin TEXT,
+    destination TEXT,
+    PRIMARY KEY (shipment_id, product_id)
+)
+''')
+
+# Step 3: Populate spreadsheet 0 data (self-contained)
+for _, row in spreadsheet_0.iterrows():
+    cursor.execute('''
+    INSERT INTO products (product_name, category, price)
+    VALUES (?, ?, ?)
+    ''', (row['product_name'], row['category'], row['price']))
+
+# Step 4: Merge spreadsheet 1 and 2 for shipment data
+shipments_merged = pd.merge(spreadsheet_1, spreadsheet_2, on='shipment_id', how='left')
+
+for _, row in shipments_merged.iterrows():
+    cursor.execute('''
+    INSERT INTO shipments (shipment_id, product_id, quantity, origin, destination)
+    VALUES (?, ?, ?, ?, ?)
+    ''', (row['shipment_id'], row['product_id'], row['quantity'], row['origin'], row['destination']))
+
+# Step 5: Commit changes and close connection
 conn.commit()
-
-# Part 1: Insert Spreadsheet 0 (self-contained)
-print("Inserting data from Spreadsheet 0...")
-df0 = pd.read_csv('spreadsheet0.csv')
-# Assume columns match: shipping_id, product, quantity, origin, destination
-df0.to_sql('shipments', conn, if_exists='append', index=False)
-print(f"Inserted {len(df0)} rows from Spreadsheet 0.")
-
-# Part 2: Handle Spreadsheets 1 and 2 (dependent)
-print("Processing Spreadsheets 1 and 2...")
-df1 = pd.read_csv('spreadsheet1.csv')  # Columns: shipping_id, product, quantity
-df2 = pd.read_csv('spreadsheet2.csv')  # Columns: shipping_id, origin, destination
-
-# Merge on shipping_id to combine shipment details with products
-df_combined = df1.merge(df2, on='shipping_id', how='inner')
-
-# Optional: If total shipment quantity is needed, group and sum quantities per shipment
-# But since we insert per product, we'll use per-product quantity
-# Example: shipment_quantities = df1.groupby('shipping_id')['quantity'].sum().to_dict()
-# Then add to df_combined if required (e.g., df_combined['total_shipment_qty'] = df_combined['shipping_id'].map(shipment_quantities))
-
-# Insert the combined data (one row per product)
-df_combined.to_sql('shipments', conn, if_exists='append', index=False)
-print(f"Inserted {len(df_combined)} rows from combined Spreadsheets 1 and 2.")
-
-# Close the connection
 conn.close()
-print("Database population complete!")
+
+print("Database populated successfully!")
+
