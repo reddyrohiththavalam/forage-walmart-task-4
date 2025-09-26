@@ -1,64 +1,123 @@
-"""
-Python Script to Populate Walmart SQLite Database from Spreadsheets
-
-Instructions:
-1. Place the spreadsheet files in the same directory as this script.
-2. Ensure pandas and sqlite3 libraries are installed.
-3. Run the script to populate the database.
-"""
-
+import csv
 import sqlite3
-import pandas as pd
-
-# Step 1: Load the spreadsheets
-spreadsheet_0 = pd.read_excel("spreadsheet0.xlsx")
-spreadsheet_1 = pd.read_excel("spreadsheet1.xlsx")
-spreadsheet_2 = pd.read_excel("spreadsheet2.xlsx")
-
-# Step 2: Connect to the SQLite database
-conn = sqlite3.connect("walmart.db")
-cursor = conn.cursor()
-
-# Optional: Create tables if they don't exist
-cursor.execute('''
-CREATE TABLE IF NOT EXISTS products (
-    product_id INTEGER PRIMARY KEY,
-    product_name TEXT,
-    category TEXT,
-    price REAL
-)
-''')
-
-cursor.execute('''
-CREATE TABLE IF NOT EXISTS shipments (
-    shipment_id INTEGER,
-    product_id INTEGER,
-    quantity INTEGER,
-    origin TEXT,
-    destination TEXT,
-    PRIMARY KEY (shipment_id, product_id)
-)
-''')
-
-# Step 3: Populate spreadsheet 0 data (self-contained)
-for _, row in spreadsheet_0.iterrows():
-    cursor.execute('''
-    INSERT INTO products (product_name, category, price)
-    VALUES (?, ?, ?)
-    ''', (row['product_name'], row['category'], row['price']))
-
-# Step 4: Merge spreadsheet 1 and 2 for shipment data
-shipments_merged = pd.merge(spreadsheet_1, spreadsheet_2, on='shipment_id', how='left')
-
-for _, row in shipments_merged.iterrows():
-    cursor.execute('''
-    INSERT INTO shipments (shipment_id, product_id, quantity, origin, destination)
-    VALUES (?, ?, ?, ?, ?)
-    ''', (row['shipment_id'], row['product_id'], row['quantity'], row['origin'], row['destination']))
-
-# Step 5: Commit changes and close connection
-conn.commit()
-conn.close()
-
-print("Database populated successfully!")
-
+class DatabaseConnector:
+"""
+Manages a connection to a sqlite database.
+"""
+def __init__(self, database_file):
+self.connection = sqlite3.connect(database_file)
+self.cursor = self.connection.cursor()
+def populate(self, spreadsheet_folder):
+"""
+Populate the database with data imported from each spreadsheet.
+"""
+# open the spreadsheets
+with open(f"{spreadsheet_folder}/shipping_data_0.csv", "r") as spreadsheet_file_0:
+with open(f"{spreadsheet_folder}/shipping_data_1.csv", "r") as spreadsheet_file_1:
+with open(f"{spreadsheet_folder}/shipping_data_2.csv", "r") as spreadsheet_file_2:
+# prepare the csv readers
+csv_reader_0 = csv.reader(spreadsheet_file_0)
+csv_reader_1 = csv.reader(spreadsheet_file_1)
+csv_reader_2 = csv.reader(spreadsheet_file_2)
+# populate first spreadsheet
+self.populate_first_shipping_data(csv_reader_0)
+self.populate_second_shipping_data(csv_reader_1, csv_reader_2)
+def populate_first_shipping_data(self, csv_reader_0):
+"""
+Populate the database with data imported from the first spreadsheet.
+"""
+for row_index, row in enumerate(csv_reader_0):
+# ignore the header row
+if row_index > 0:
+# extract each required field
+product_name = row[2]
+product_quantity = row[4]
+origin = row[0]
+destination = row[1]
+# insert the data into the database
+self.insert_product_if_it_does_not_already_exist(product_name)
+self.insert_shipment(product_name, product_quantity, origin, destination)
+# give an indication of progress
+print(f"inserted product {row_index} from shipping_data_0")
+def populate_second_shipping_data(self, csv_reader_1, csv_reader_2):
+"""
+Populate the database with data imported from the second and third spreadsheets.
+"""
+# collect shipment info
+shipment_info = {}
+for row_index, row in enumerate(csv_reader_2):
+# ignore the header row
+if row_index > 0:
+# extract each required field
+shipment_identifier = row[0]
+origin = row[1]
+destination = row[2]
+# store them for later use
+shipment_info[shipment_identifier] = {
+"origin": origin,
+"destination": destination,
+"products": {}
+}
+# read in product information
+for row_index, row in enumerate(csv_reader_1):
+# ignore the header row
+if row_index > 0:
+# extract each required field
+shipment_identifier = row[0]
+product_name = row[1]
+# populate intermediary data structure
+products = shipment_info[shipment_identifier]["products"]
+if products.get(product_name, None) is None:
+products[product_name] = 1
+else:
+products[product_name] += 1
+# insert the data into the database
+count = 0
+for shipment_identifier, shipment in shipment_info.items():
+# collect origin and destination
+origin = shipment_info[shipment_identifier]["origin"]
+destination = shipment_info[shipment_identifier]["destination"]
+for product_name, product_quantity in shipment["products"].items():
+# iterate through products and insert into database
+self.insert_product_if_it_does_not_already_exist(product_name)
+self.insert_shipment(product_name, product_quantity, origin, destination)
+# give an indication of progress
+print(f"inserted product {count} from shipping_data_1")
+count += 1
+def insert_product_if_it_does_not_already_exist(self, product_name):
+"""
+Insert a new product into the database.
+If a product already exists in the database with the given name,
+ignore it.
+"""
+query = """
+INSERT OR IGNORE INTO product (name)
+VALUES (?);
+"""
+self.cursor.execute(query, (product_name,))
+self.connection.commit()
+def insert_shipment(self, product_name, product_quantity, origin, destination):
+"""
+Insert a new shipment into the database.
+"""
+# collect the product id
+query = """
+SELECT id
+FROM product
+WHERE product.name = ?;
+"""
+self.cursor.execute(query, (product_name,))
+product_id = self.cursor.fetchone()[0]
+# insert the shipment
+query = """
+INSERT OR IGNORE INTO shipment (product_id, quantity, origin, destination)
+VALUES (?, ?, ?, ?);
+"""
+self.cursor.execute(query, (product_id, product_quantity, origin, destination))
+self.connection.commit()
+def close(self):
+self.connection.close()
+if __name__ == '__main__':
+database_connector = DatabaseConnector("shipment_database.db")
+database_connector.populate("./data")
+database_connector.close() 
